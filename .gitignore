@@ -1,0 +1,12 @@
+# Derleme ciktilari
+build/
+.gradle/
+.kotlin/
+.idea/
+*.apk
+*.aab
+
+# Gizli: imza anahtari ve parolalari, depoya girmez
+keystore/
+keystore.properties
+local.properties

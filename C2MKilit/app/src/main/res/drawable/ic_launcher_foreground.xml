@@ -1,0 +1,25 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Minimal V: yuvarlak uçlu tek çizgi, maviden yeşile geçiş. 66'lık güvenli alanın içinde kalır. -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M37,39 L54,71 L71,39"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:endColor="#34D399"
+                android:endX="71"
+                android:endY="71"
+                android:startColor="#8AB4FF"
+                android:startX="37"
+                android:startY="39"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
+</vector>

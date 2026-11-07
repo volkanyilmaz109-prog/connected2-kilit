@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VOCD</string>
+    <string name="service_description">connected2.me açıkken Keşfet ve Shuffle sekmelerinin üstüne kilit koyar, bu ekranlara girildiğinde Sohbet sekmesine geri döndürür ve tarayıcılarda engellediğin siteleri kapatır. Ekran içeriği yalnızca bunun için cihazda okunur, hiçbir yere gönderilmez.</string>
+    <!-- service_description içinden benzersiz bir parça: erişilebilirlik ayar sayfasını tanımak için -->
+    <string name="guard_marker">Keşfet ve Shuffle sekmelerinin</string>
+    <string name="guard_toast">Sıkı mod: önce VOCD\'yi açıp şifreni gir.</string>
+</resources>

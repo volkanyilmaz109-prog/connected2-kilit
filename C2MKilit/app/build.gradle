@@ -1,0 +1,69 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+// Imza parolalari git disindaki keystore.properties dosyasinda
+def imza = new Properties()
+def imzaDosyasi = rootProject.file('keystore.properties')
+if (imzaDosyasi.exists()) imzaDosyasi.withInputStream { imza.load(it) }
+
+android {
+    namespace 'com.volkan.c2mblocker'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.volkan.c2mblocker'
+        minSdk 26
+        targetSdk 34
+        // Her güncellemede versionCode'u bir artır; telefondaki sürümün üstüne kurulur.
+        versionCode 4
+        versionName '3.1'
+    }
+
+    // Güncellemelerin eski sürümün üstüne kurulabilmesi için hep aynı anahtarla imzala.
+    // keystore/c2m.keystore dosyasını kaybetme: kaybolursa uygulamayı silip yeniden kurmak gerekir.
+    signingConfigs {
+        c2m {
+            storeFile file('../keystore/c2m.keystore')
+            storePassword imza['storePassword']
+            keyAlias imza['keyAlias']
+            keyPassword imza['keyPassword']
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.c2m
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            signingConfig signingConfigs.c2m
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+}
+
+dependencies {
+    implementation platform('androidx.compose:compose-bom:2024.09.03')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.activity:activity-compose:1.9.2'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.6'
+    testImplementation 'junit:junit:4.13.2'
+}
