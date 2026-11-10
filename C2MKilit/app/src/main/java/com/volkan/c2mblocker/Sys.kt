@@ -60,6 +60,12 @@ object Sys {
         false
     }
 
+    /** Güncelleme kurulumu için "bilinmeyen uygulamaları yükle" izni. */
+    fun openUnknownSources(ctx: Context) =
+        open(ctx, Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + ctx.packageName)))
+
+    fun openUrl(ctx: Context, url: String) = open(ctx, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+
     /** Ağ ayarları: Özel DNS buradan (Xiaomi'de "Bağlantı ve paylaşım" altından) açılır. */
     fun openNetworkSettings(ctx: Context) {
         if (!open(ctx, Intent(Settings.ACTION_WIRELESS_SETTINGS))) open(ctx, Intent(Settings.ACTION_SETTINGS))

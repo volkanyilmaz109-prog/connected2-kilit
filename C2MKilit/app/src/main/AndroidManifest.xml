@@ -2,8 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Yalnızca "İnternetten liste indir" için -->
+    <!-- "İnternetten liste indir" ve GitHub'dan güncelleme için -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- İndirilen güncellemeyi Android'in kurulum ekranında açmak için; kurulumu kullanıcı onaylar -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Yalnızca Özel DNS'in açık olup olmadığını göstermek için -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
@@ -45,5 +47,16 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/blocker_service" />
         </service>
+
+        <!-- İndirilen güncelleme APK'sını kurulum ekranına vermek için -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
     </application>
 </manifest>

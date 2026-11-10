@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.Timer
@@ -66,6 +67,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -352,6 +356,12 @@ private fun LockScreen(onUnlock: () -> Unit) {
 
 // ==================================================================== Panel
 
+private enum class Tab(val label: String, val icon: ImageVector) {
+    App("C2 Kilidi", Icons.Rounded.Shield),
+    Sites("Siteler", Icons.Rounded.Public),
+    Settings("Ayarlar", Icons.Rounded.Settings),
+}
+
 @Composable
 private fun DashboardScreen(onLock: () -> Unit, onOpenSites: () -> Unit) {
     val ctx = LocalContext.current
@@ -364,141 +374,206 @@ private fun DashboardScreen(onLock: () -> Unit, onOpenSites: () -> Unit) {
         }
     }
     val serviceOn = remember(tick) { Sys.isServiceEnabled(ctx) }
-    val batteryOk = remember(tick) { Sys.isIgnoringBattery(ctx) }
-    val graceMs = remember(tick) { Vault.graceRemainingMs(ctx) }
-    val siteCount = remember(tick) { SiteBlocklist.all(ctx).size }
-    val siteBlocks = remember(tick) { SiteBlocklist.blockCount(ctx) }
     var strict by remember { mutableStateOf(Vault.isStrict(ctx)) }
-    var sitesOn by remember { mutableStateOf(SiteBlocklist.isEnabled(ctx)) }
-    var showNewPassword by remember { mutableStateOf(false) }
+    var tab by rememberSaveable { mutableStateOf(Tab.App) }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .systemBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("VOCD", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
-            FilledTonalIconButton(onClick = onLock, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Rounded.Lock, contentDescription = "Uygulamayı kilitle")
-            }
-        }
-
-        StatusHero(serviceOn = serviceOn, strict = strict)
-
-        SectionTitle("Engellenenler")
-        SectionCard {
-            InfoRow(Icons.Rounded.Explore, "Keşfet", "Dokunma engellenir")
-            RowDivider()
-            InfoRow(Icons.Rounded.Shuffle, "Shuffle ve arama", "Dokunma engellenir, açılırsa Sohbet'e döner")
-        }
-
-        SectionTitle("Site engelleme")
-        SectionCard {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .toggleable(
-                        value = sitesOn,
-                        onValueChange = { sitesOn = it; SiteBlocklist.setEnabled(ctx, it) },
-                        role = Role.Switch,
-                    )
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconBadge(Icons.Rounded.Language, MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Tarayıcılarda engelle", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Chrome, Samsung İnternet, Firefox, Opera, Edge, Brave ve Mi Tarayıcı'da listedeki siteler açılmaz.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                Tab.entries.forEach { t ->
+                    NavigationBarItem(
+                        selected = tab == t,
+                        onClick = { tab = t },
+                        icon = { Icon(t.icon, contentDescription = null) },
+                        label = { Text(t.label) },
                     )
                 }
-                Spacer(Modifier.width(12.dp))
-                Switch(checked = sitesOn, onCheckedChange = null)
             }
-            RowDivider()
-            ActionRow(
-                Icons.Rounded.Public,
-                "Engelli siteler",
-                "%,d site · %,d kez engellendi".format(siteCount, siteBlocks),
-                onClick = onOpenSites,
-            )
-        }
-
-        SectionTitle("Tüm uygulamalarda filtre")
-        PrivateDnsCard(tick)
-
-        SectionTitle("Kurulum")
-        SectionCard {
-            ChecklistRow(
-                icon = Icons.Rounded.Accessibility,
-                title = "Erişilebilirlik servisi",
-                ok = serviceOn,
-                detail = if (serviceOn) "Açık, arka planda çalışıyor" else "Kapalı, engelleme çalışmıyor",
-                action = "Aç",
-                onClick = { Sys.openAccessibility(ctx) },
-            )
-            RowDivider()
-            ChecklistRow(
-                icon = Icons.Rounded.BatteryChargingFull,
-                title = "Pil kısıtlaması",
-                ok = batteryOk,
-                detail = if (batteryOk) "Kısıtlama yok" else "Sistem servisi durdurabilir",
-                action = "Kaldır",
-                onClick = { Sys.requestIgnoreBattery(ctx) },
-            )
-            RowDivider()
-            ChecklistRow(
-                icon = Icons.Rounded.RestartAlt,
-                title = "Otomatik başlatma",
-                ok = null,
-                detail = "Xiaomi'de açık olmalı",
-                action = "Kontrol et",
-                onClick = { Sys.openAutostart(ctx) },
-            )
-            RowDivider()
-            ChecklistRow(
-                icon = Icons.Rounded.AdminPanelSettings,
-                title = "Kısıtlı ayarlar",
-                ok = if (serviceOn) true else null,
-                detail = if (serviceOn) "İzin verilmiş" else "Servis gri ise ⋮ menüsünden izin ver",
-                action = "Uygulama bilgisi",
-                onClick = { Sys.openAppInfo(ctx) },
-            )
-        }
-
-        SectionTitle("Sıkı mod")
-        StrictCard(
-            strict = strict,
-            graceMs = graceMs,
-            onStrictChange = { strict = it; Vault.setStrict(ctx, it) },
-            onLockNow = { Vault.endGrace(ctx); onLock() },
-        )
-
-        SectionTitle("Hedef uygulama")
-        TargetCard()
-
-        SectionTitle("Şifre")
-        SectionCard {
-            ActionRow(Icons.Rounded.Key, "Yeni şifre oluştur", "Eski şifre hemen geçersiz olur") {
-                showNewPassword = true
+        },
+    ) { inner ->
+        AnimatedContent(
+            targetState = tab,
+            transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(120)) },
+            label = "tab",
+            modifier = Modifier.padding(inner),
+        ) { t ->
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("VOCD", style = MaterialTheme.typography.headlineMedium)
+                        Text(
+                            t.label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    FilledTonalIconButton(onClick = onLock, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Rounded.Lock, contentDescription = "Uygulamayı kilitle")
+                    }
+                }
+                when (t) {
+                    Tab.App -> AppTab(serviceOn = serviceOn, strict = strict)
+                    Tab.Sites -> SitesTab(tick = tick, onOpenSites = onOpenSites)
+                    Tab.Settings -> SettingsTab(
+                        tick = tick,
+                        serviceOn = serviceOn,
+                        strict = strict,
+                        onStrictChange = { strict = it; Vault.setStrict(ctx, it) },
+                        onLock = onLock,
+                    )
+                }
             }
         }
+    }
+}
 
-        Text(
-            "Sürüm ${BuildConfig.VERSION_NAME}",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+/** connected2.me sekme kilidi: durum, kilitlenen sekmeler ve hedef paket. */
+@Composable
+private fun AppTab(serviceOn: Boolean, strict: Boolean) {
+    StatusHero(serviceOn = serviceOn, strict = strict)
+
+    SectionTitle("Kilitli sekmeler")
+    SectionCard {
+        InfoRow(Icons.Rounded.Explore, "Keşfet", "Dokunma engellenir")
+        RowDivider()
+        InfoRow(Icons.Rounded.Shuffle, "Shuffle ve arama", "Dokunma engellenir, açılırsa Sohbet'e döner")
+    }
+
+    SectionTitle("Hedef uygulama")
+    TargetCard()
+}
+
+/** Site engelleme: tarayıcı kontrolü, engelli liste ve sistem genelinde DNS filtresi. */
+@Composable
+private fun SitesTab(tick: Int, onOpenSites: () -> Unit) {
+    val ctx = LocalContext.current
+    val siteCount = remember(tick) { SiteBlocklist.all(ctx).size }
+    val siteBlocks = remember(tick) { SiteBlocklist.blockCount(ctx) }
+    var sitesOn by remember { mutableStateOf(SiteBlocklist.isEnabled(ctx)) }
+
+    SectionCard {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .toggleable(
+                    value = sitesOn,
+                    onValueChange = { sitesOn = it; SiteBlocklist.setEnabled(ctx, it) },
+                    role = Role.Switch,
+                )
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconBadge(Icons.Rounded.Language, MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Tarayıcılarda engelle", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Chrome, Samsung İnternet, Firefox, Opera, Edge, Brave ve Mi Tarayıcı'da listedeki siteler açılmaz.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(checked = sitesOn, onCheckedChange = null)
+        }
+        RowDivider()
+        ActionRow(
+            Icons.Rounded.Public,
+            "Engelli siteler",
+            "%,d site · %,d kez engellendi".format(siteCount, siteBlocks),
+            onClick = onOpenSites,
         )
     }
+
+    SectionTitle("Tüm uygulamalarda filtre")
+    PrivateDnsCard(tick)
+}
+
+/** Kurulum, sıkı mod ve şifre. */
+@Composable
+private fun SettingsTab(
+    tick: Int,
+    serviceOn: Boolean,
+    strict: Boolean,
+    onStrictChange: (Boolean) -> Unit,
+    onLock: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val batteryOk = remember(tick) { Sys.isIgnoringBattery(ctx) }
+    val graceMs = remember(tick) { Vault.graceRemainingMs(ctx) }
+    var showNewPassword by remember { mutableStateOf(false) }
+
+    SectionTitle("Kurulum")
+    SectionCard {
+        ChecklistRow(
+            icon = Icons.Rounded.Accessibility,
+            title = "Erişilebilirlik servisi",
+            ok = serviceOn,
+            detail = if (serviceOn) "Açık, arka planda çalışıyor" else "Kapalı, engelleme çalışmıyor",
+            action = "Aç",
+            onClick = { Sys.openAccessibility(ctx) },
+        )
+        RowDivider()
+        ChecklistRow(
+            icon = Icons.Rounded.BatteryChargingFull,
+            title = "Pil kısıtlaması",
+            ok = batteryOk,
+            detail = if (batteryOk) "Kısıtlama yok" else "Sistem servisi durdurabilir",
+            action = "Kaldır",
+            onClick = { Sys.requestIgnoreBattery(ctx) },
+        )
+        RowDivider()
+        ChecklistRow(
+            icon = Icons.Rounded.RestartAlt,
+            title = "Otomatik başlatma",
+            ok = null,
+            detail = "Xiaomi'de açık olmalı",
+            action = "Kontrol et",
+            onClick = { Sys.openAutostart(ctx) },
+        )
+        RowDivider()
+        ChecklistRow(
+            icon = Icons.Rounded.AdminPanelSettings,
+            title = "Kısıtlı ayarlar",
+            ok = if (serviceOn) true else null,
+            detail = if (serviceOn) "İzin verilmiş" else "Servis gri ise ⋮ menüsünden izin ver",
+            action = "Uygulama bilgisi",
+            onClick = { Sys.openAppInfo(ctx) },
+        )
+    }
+
+    SectionTitle("Sıkı mod")
+    StrictCard(
+        strict = strict,
+        graceMs = graceMs,
+        onStrictChange = onStrictChange,
+        onLockNow = { Vault.endGrace(ctx); onLock() },
+    )
+
+    SectionTitle("Şifre")
+    SectionCard {
+        ActionRow(Icons.Rounded.Key, "Yeni şifre oluştur", "Eski şifre hemen geçersiz olur") {
+            showNewPassword = true
+        }
+    }
+
+    SectionTitle("Güncelleme")
+    UpdateCard()
+
+    Text(
+        "Sürüm ${BuildConfig.VERSION_NAME}",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+    )
 
     if (showNewPassword) NewPasswordDialog(onDismiss = { showNewPassword = false })
 }
