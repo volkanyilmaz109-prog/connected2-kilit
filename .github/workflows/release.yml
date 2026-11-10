@@ -42,9 +42,18 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then echo "KEYSTORE_BASE64 sırrı eksik"; exit 1; fi
+          for s in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!s}" ]; then echo "::error::$s sırrı eksik ya da adı farklı yazılmış"; exit 1; fi
+          done
           mkdir -p keystore
-          echo "$KEYSTORE_BASE64" | base64 -d > keystore/c2m.keystore
+          # Windows panosundan yapıştırınca gelen boşluk / satır sonlarını at
+          if ! printf '%s' "$KEYSTORE_BASE64" | tr -d ' \r\n\t' | base64 -d > keystore/c2m.keystore; then
+            echo "::error::KEYSTORE_BASE64 geçerli bir base64 değil"; exit 1
+          fi
+          echo "Anahtar dosyası: $(wc -c < keystore/c2m.keystore) bayt"
+          STORE_PASSWORD="${STORE_PASSWORD//$'\r'/}"
+          KEY_ALIAS="${KEY_ALIAS//$'\r'/}"
+          KEY_PASSWORD="${KEY_PASSWORD//$'\r'/}"
           printf 'storePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
 
       - name: Test ve derleme
