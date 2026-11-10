@@ -8,6 +8,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -49,10 +50,27 @@ private val DarkColors = darkColorScheme(
     outline = Color(0xFF3A4660), outlineVariant = Color(0xFF232C40),
 )
 
+/**
+ * Marka renkleri: logodaki maviden yeşile geçiş. Kahraman kartları bu gradyanı kullanır;
+ * üstlerindeki beyaz yazı iki temada da en az 4.5:1 kontrast sağlar.
+ */
+object Brand {
+    val Blue = Color(0xFF1D4ED8)
+    val Teal = Color(0xFF0F766E)
+    val AlertRed = Color(0xFFB91C1C)
+    val AlertOrange = Color(0xFF9A3412)
+    val OnHero = Color(0xFFF8FAFC)
+    val OnHeroMuted = Color(0xFFEDF2F7)
+    val HeroChip = Color(0x29FFFFFF)
+    val active get() = Brush.linearGradient(listOf(Blue, Teal))
+    val alert get() = Brush.linearGradient(listOf(AlertRed, AlertOrange))
+}
+
 private val AppTypography = Typography().let { t ->
     t.copy(
         headlineLarge = t.headlineLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp),
         headlineMedium = t.headlineMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.25).sp),
+        displaySmall = t.displaySmall.copy(fontWeight = FontWeight.Bold, letterSpacing = (-1).sp),
         titleLarge = t.titleLarge.copy(fontWeight = FontWeight.SemiBold),
         titleMedium = t.titleMedium.copy(fontWeight = FontWeight.SemiBold),
         labelLarge = t.labelLarge.copy(fontWeight = FontWeight.SemiBold),

@@ -457,7 +457,11 @@ private fun SitesTab(tick: Int, onOpenSites: () -> Unit) {
     val siteCount = remember(tick) { SiteBlocklist.all(ctx).size }
     val siteBlocks = remember(tick) { SiteBlocklist.blockCount(ctx) }
     var sitesOn by remember { mutableStateOf(SiteBlocklist.isEnabled(ctx)) }
+    val dnsOn = remember(tick) { Sys.privateDnsHost(ctx) != null }
 
+    SitesHero(siteCount = siteCount, blockCount = siteBlocks, browserOn = sitesOn, dnsOn = dnsOn)
+
+    SectionTitle("Tarayıcı")
     SectionCard {
         Row(
             Modifier
@@ -576,66 +580,6 @@ private fun SettingsTab(
     )
 
     if (showNewPassword) NewPasswordDialog(onDismiss = { showNewPassword = false })
-}
-
-@Composable
-private fun StatusHero(serviceOn: Boolean, strict: Boolean) {
-    // Gradyan renkleri temadan bağımsız: beyaz yazıyla iki temada da yeterli kontrast.
-    val brush = if (serviceOn) {
-        Brush.linearGradient(listOf(Color(0xFF1D4ED8), Color(0xFF0F766E)))
-    } else {
-        Brush.linearGradient(listOf(Color(0xFFB91C1C), Color(0xFF9A3412)))
-    }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.extraLarge)
-            .background(brush)
-            .padding(24.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(
-                Modifier.size(56.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    if (serviceOn) Icons.Rounded.VerifiedUser else Icons.Rounded.GppBad,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(32.dp),
-                )
-            }
-            Text(
-                if (serviceOn) "Koruma aktif" else "Koruma kapalı",
-                style = MaterialTheme.typography.headlineMedium,
-                color = Color.White,
-            )
-            Text(
-                if (serviceOn) "connected2.me'de Keşfet ve Shuffle kilitli, listedeki siteler engelli."
-                else "Erişilebilirlik servisini açmadan engelleme çalışmaz.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = Color.White.copy(alpha = 0.88f),
-            )
-            if (serviceOn) {
-                Pill(if (strict) "Sıkı mod açık" else "Sıkı mod kapalı", Icons.Rounded.Shield)
-            }
-        }
-    }
-}
-
-@Composable
-private fun Pill(text: String, icon: ImageVector) {
-    Row(
-        Modifier
-            .clip(RoundedCornerShape(50))
-            .background(Color.White.copy(alpha = 0.16f))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, color = Color.White)
-    }
 }
 
 @Composable
