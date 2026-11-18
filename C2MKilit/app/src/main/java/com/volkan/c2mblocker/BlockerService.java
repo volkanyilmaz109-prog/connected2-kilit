@@ -157,6 +157,9 @@ public class BlockerService extends AccessibilityService {
     private long lastGuardToastAt;
     private String lastBlockedHost;
     private long lastSiteBlockAt;
+    private static final long GENERIC_SCAN_MS = 150;
+    private String lastScanPkg;
+    private long lastScanAt;
 
     private final Runnable refreshRunnable = () -> {
         refreshPending = false;
@@ -717,23 +720,61 @@ public class BlockerService extends AccessibilityService {
         if (pkgCs == null) return;
         String pkg = pkgCs.toString();
         String[] ids = BROWSERS.get(pkg);
-        if (ids == null) return;
-        for (String id : ids) {
-            List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByViewId(pkg + ":id/" + id);
-            if (nodes == null) continue;
-            for (AccessibilityNodeInfo n : nodes) {
-                if (n.isFocused()) continue; // kullanıcı adres çubuğuna yazıyor; sayfa açılınca yakalarız
-                CharSequence text = n.getText();
-                if (text == null) continue;
-                String host = SiteBlocklist.hostOf(text.toString());
-                if (host == null) continue;
-                String hit = SiteBlocklist.match(this, host);
-                if (hit != null) {
-                    blockSite(root, pkg, host);
-                    return;
+        if (ids != null) {
+            for (String id : ids) {
+                List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByViewId(pkg + ":id/" + id);
+                if (nodes == null) continue;
+                for (AccessibilityNodeInfo n : nodes) {
+                    String host = blockedHostIn(n);
+                    if (host != null) {
+                        blockSite(root, pkg, host);
+                        return;
+                    }
                 }
             }
         }
+        // Bilinen kimlikler tutmadıysa (tarayıcı güncellenmiş, ya da listede olmayan bir tarayıcı)
+        // adres çubuğuna benzeyen tüm alanlara bak. Ağaç taraması pahalı; tarayıcı başına seyrek yap.
+        if (ids == null && !BrowserApps.isBrowser(this, pkg)) return;
+        long now = SystemClock.uptimeMillis();
+        if (pkg.equals(lastScanPkg) && now - lastScanAt < GENERIC_SCAN_MS) return;
+        lastScanPkg = pkg;
+        lastScanAt = now;
+        String host = scanForBlockedHost(root);
+        if (host != null) blockSite(root, pkg, host);
+    }
+
+    /** Görünümün metni (ya da açıklaması) listedeki bir siteyse alan adını döndürür. */
+    private String blockedHostIn(AccessibilityNodeInfo n) {
+        if (n.isFocused()) return null; // kullanıcı adres çubuğuna yazıyor; sayfa açılınca yakalarız
+        CharSequence[] texts = {n.getText(), n.getContentDescription()};
+        for (CharSequence text : texts) {
+            if (text == null) continue;
+            String host = SiteBlocklist.hostOf(text.toString());
+            if (host != null && SiteBlocklist.match(this, host) != null) return host;
+        }
+        return null;
+    }
+
+    private String scanForBlockedHost(AccessibilityNodeInfo root) {
+        ArrayDeque<AccessibilityNodeInfo> stack = new ArrayDeque<>();
+        stack.push(root);
+        int visited = 0;
+        while (!stack.isEmpty() && visited++ < 2500) {
+            AccessibilityNodeInfo n = stack.pop();
+            // WebView'in içi sayfa içeriğidir; oradaki bağlantı metinleri adres çubuğu değil.
+            CharSequence cls = n.getClassName();
+            if (cls != null && cls.toString().endsWith("WebView")) continue;
+            if (n.isVisibleToUser() && BrowserApps.looksLikeAddressBar(n.getViewIdResourceName(), cls)) {
+                String host = blockedHostIn(n);
+                if (host != null) return host;
+            }
+            for (int i = 0; i < n.getChildCount(); i++) {
+                AccessibilityNodeInfo c = n.getChild(i);
+                if (c != null) stack.push(c);
+            }
+        }
+        return null;
     }
 
     private void blockSite(AccessibilityNodeInfo root, String pkg, String host) {

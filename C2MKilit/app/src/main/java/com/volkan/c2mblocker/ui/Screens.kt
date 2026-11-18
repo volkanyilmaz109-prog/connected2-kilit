@@ -458,6 +458,7 @@ private fun SitesTab(tick: Int, onOpenSites: () -> Unit) {
     val siteBlocks = remember(tick) { SiteBlocklist.blockCount(ctx) }
     var sitesOn by remember { mutableStateOf(SiteBlocklist.isEnabled(ctx)) }
     val dnsOn = remember(tick) { Sys.privateDnsHost(ctx) != null }
+    val browserCount = remember(tick) { com.volkan.c2mblocker.BrowserApps.packages(ctx).size }
 
     SitesHero(siteCount = siteCount, blockCount = siteBlocks, browserOn = sitesOn, dnsOn = dnsOn)
 
@@ -479,7 +480,8 @@ private fun SitesTab(tick: Int, onOpenSites: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("Tarayıcılarda engelle", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Chrome, Samsung İnternet, Firefox, Opera, Edge, Brave ve Mi Tarayıcı'da listedeki siteler açılmaz.",
+                    "Listedeki siteler telefondaki tüm tarayıcılarda açılmaz, VPN açıkken de. " +
+                        "Bulunan tarayıcı: $browserCount.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
