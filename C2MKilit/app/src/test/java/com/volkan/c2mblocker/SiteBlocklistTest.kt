@@ -17,6 +17,31 @@ class SiteBlocklistTest {
     }
 
     @Test
+    fun hostOf_ignoresInvisibleCharacters() {
+        assertEquals("example.com", SiteBlocklist.hostOf("\u200Eexample.com\u200F"))
+        assertEquals("example.com", SiteBlocklist.hostOf("\u2068https://example.com/\u2069"))
+        assertEquals("example.com", SiteBlocklist.hostOf("\u00A0example.com\u00A0"))
+    }
+
+    @Test
+    fun keywordEntriesMatchAnywhereInHost() {
+        val set = setOf("instagram", "example.org")
+        assertEquals("instagram", SiteBlocklist.matchIn(set, "instagram.com"))
+        assertEquals("instagram", SiteBlocklist.matchIn(set, "m.instagram.com"))
+        assertEquals("instagram", SiteBlocklist.matchIn(set, "www-instagram-com.translate.goog"))
+        assertEquals("example.org", SiteBlocklist.matchIn(set, "a.example.org"))
+        assertNull(SiteBlocklist.matchIn(set, "google.com"))
+    }
+
+    @Test
+    fun parseSingle_acceptsDomainsAndKeywords() {
+        assertEquals(listOf("example.com"), SiteBlocklist.parseSingle("https://www.example.com/x"))
+        assertEquals(listOf("instagram"), SiteBlocklist.parseSingle("  Instagram "))
+        assertEquals(emptyList<String>(), SiteBlocklist.parseSingle("abc"))
+        assertEquals(emptyList<String>(), SiteBlocklist.parseSingle("two words"))
+    }
+
+    @Test
     fun hostOf_rejectsNonSites() {
         assertNull(SiteBlocklist.hostOf("hello world"))
         assertNull(SiteBlocklist.hostOf("Search or type web address"))

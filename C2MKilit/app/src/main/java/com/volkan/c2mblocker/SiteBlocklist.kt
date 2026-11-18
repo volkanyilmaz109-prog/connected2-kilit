@@ -118,13 +118,43 @@ object SiteBlocklist {
             if (h in set) return h
             h = h.substringAfter('.')
         }
-        return null
+        // Noktasız girişler anahtar kelime: adresin herhangi bir yerinde geçerse engellenir
+        // ("instagram" → instagram.com, m.instagram.com, instagram-com.translate.goog ...).
+        return keywordsOf(set).firstOrNull { host.contains(it) }
+    }
+
+    /** En kısa anahtar kelime; daha kısası çok fazla siteyi yanlışlıkla kapatır. */
+    const val MIN_KEYWORD = 4
+
+    @Volatile
+    private var keywordCache: Pair<Set<String>, List<String>>? = null
+
+    private fun keywordsOf(set: Set<String>): List<String> {
+        keywordCache?.let { if (it.first === set) return it.second }
+        val k = set.filter { '.' !in it }
+        keywordCache = set to k
+        return k
+    }
+
+    /**
+     * Elle tek giriş: alan adı ya da URL ise alan adı, nokta içermeyen tek bir sözcükse
+     * (ör. "instagram") anahtar kelime olarak eklenir.
+     */
+    fun parseSingle(text: String): List<String> {
+        val parsed = parse(text)
+        if (parsed.isNotEmpty()) return parsed
+        val word = text.trim().lowercase().removePrefix("www.")
+        val ok = word.length >= MIN_KEYWORD && word !in SKIP &&
+            word.all { it.isLetterOrDigit() || it == '-' }
+        return if (ok) listOf(word) else emptyList()
     }
 
     /** Adres çubuğu metninden ya da bir URL'den alan adını çıkarır; site değilse null. */
     @JvmStatic
     fun hostOf(text: String): String? {
-        var s = text.trim().lowercase()
+        // Adres çubukları yön işaretleri gibi görünmez karakterler ekleyebiliyor; onları at.
+        var s = text.filterNot { Character.getType(it) == Character.FORMAT.toInt() || it == '\u00A0' }
+            .trim().lowercase()
         if (s.isEmpty() || s.any { it.isWhitespace() }) return null
         s = s.substringAfter("://")
             .substringBefore('/')

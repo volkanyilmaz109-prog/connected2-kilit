@@ -22,7 +22,13 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.view.WindowInsets;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.ImageView;
 import android.widget.Toast;
 
@@ -158,6 +164,18 @@ public class BlockerService extends AccessibilityService {
     private String lastBlockedHost;
     private long lastSiteBlockAt;
     private static final long GENERIC_SCAN_MS = 150;
+    /** Engelli site açıkken tarayıcının üstünü kaplayan tam ekran katman. */
+    private View siteBlockView;
+    private TextView siteBlockHostView;
+    private String siteBlockHost;
+    /** Katmanı tetikleyen tarayıcı ve şu an öndeki uygulama (pencere değişim olaylarından). */
+    private String siteBlockPkg;
+    private String foregroundPkg;
+    private long siteBlockShownAt;
+    /** Bu yenilemede: bir tarayıcı görüldü mü, adresi okundu mu, engelli site bulundu mu. */
+    private boolean browserSeen;
+    private boolean siteEvaluated;
+    private boolean siteHit;
     private String lastScanPkg;
     private long lastScanAt;
 
@@ -186,6 +204,7 @@ public class BlockerService extends AccessibilityService {
         int type = event.getEventType();
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) {
             rememberPackage(pkg.toString());
+            noteForeground(pkg.toString());
         }
         if ((type == AccessibilityEvent.TYPE_VIEW_CLICKED || type == AccessibilityEvent.TYPE_VIEW_SELECTED)
                 && isTarget(this, pkg) && isBlockedTabEvent(event)) {
@@ -223,6 +242,7 @@ public class BlockerService extends AccessibilityService {
         placementCheckPending = false;
         handler.removeCallbacksAndMessages(null);
         removeOverlays();
+        removeSiteBlock();
         shownRects = null;
         hasPending = false;
     }
@@ -232,6 +252,9 @@ public class BlockerService extends AccessibilityService {
     private void refresh() {
         boolean strict = isStrictActive(this);
         boolean sites = SiteBlocklist.isEnabled(this);
+        browserSeen = false;
+        siteEvaluated = false;
+        siteHit = false;
         Rect ime = null;
         int navBarTop = Integer.MAX_VALUE;
         // Hedef uygulamanın tüm pencereleri: arama önerileri gibi açılır pencereler ana pencerenin
@@ -294,6 +317,8 @@ public class BlockerService extends AccessibilityService {
                 targetWins.add(r);
             }
         }
+
+        updateSiteBlock(sites);
 
         if (targetRoots.isEmpty()) {
             leaveTarget();
@@ -720,53 +745,87 @@ public class BlockerService extends AccessibilityService {
         if (pkgCs == null) return;
         String pkg = pkgCs.toString();
         String[] ids = BROWSERS.get(pkg);
+        if (ids == null && !BrowserApps.isBrowser(this, pkg)) return;
+        browserSeen = true;
+        StringBuilder dbg = new StringBuilder(pkg);
         if (ids != null) {
+            int found = 0;
             for (String id : ids) {
                 List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByViewId(pkg + ":id/" + id);
                 if (nodes == null) continue;
                 for (AccessibilityNodeInfo n : nodes) {
-                    String host = blockedHostIn(n);
+                    found++;
+                    siteEvaluated = true;
+                    String host = blockedHostIn(n, dbg, id);
                     if (host != null) {
+                        recordSiteDebug(dbg.append("\n→ engellendi: ").append(host));
                         blockSite(root, pkg, host);
                         return;
                     }
                 }
             }
+            if (found == 0) dbg.append("\nBilinen adres çubuğu (").append(String.join(", ", ids)).append(") yok");
         }
         // Bilinen kimlikler tutmadıysa (tarayıcı güncellenmiş, ya da listede olmayan bir tarayıcı)
         // adres çubuğuna benzeyen tüm alanlara bak. Ağaç taraması pahalı; tarayıcı başına seyrek yap.
-        if (ids == null && !BrowserApps.isBrowser(this, pkg)) return;
         long now = SystemClock.uptimeMillis();
         if (pkg.equals(lastScanPkg) && now - lastScanAt < GENERIC_SCAN_MS) return;
         lastScanPkg = pkg;
         lastScanAt = now;
-        String host = scanForBlockedHost(root);
-        if (host != null) blockSite(root, pkg, host);
+        siteEvaluated = true;
+        String host = scanForBlockedHost(root, dbg);
+        if (host != null) {
+            recordSiteDebug(dbg.append("\n→ engellendi: ").append(host));
+            blockSite(root, pkg, host);
+        } else {
+            recordSiteDebug(dbg.append("\n→ listede eşleşme yok"));
+        }
     }
 
-    /** Görünümün metni (ya da açıklaması) listedeki bir siteyse alan adını döndürür. */
-    private String blockedHostIn(AccessibilityNodeInfo n) {
-        if (n.isFocused()) return null; // kullanıcı adres çubuğuna yazıyor; sayfa açılınca yakalarız
+    /**
+     * Görünümün metni (ya da açıklaması) listedeki bir siteyse alan adını döndürür.
+     * Tanılama için ne okunduğunu dbg'ye yazar.
+     */
+    private String blockedHostIn(AccessibilityNodeInfo n, StringBuilder dbg, String label) {
         CharSequence[] texts = {n.getText(), n.getContentDescription()};
+        boolean focused = n.isFocused();
         for (CharSequence text : texts) {
-            if (text == null) continue;
-            String host = SiteBlocklist.hostOf(text.toString());
-            if (host != null && SiteBlocklist.match(this, host) != null) return host;
+            if (text == null || text.length() == 0) continue;
+            String raw = text.toString();
+            String host = SiteBlocklist.hostOf(raw);
+            dbg.append("\n").append(label).append(": \"")
+                    .append(raw.length() > 60 ? raw.substring(0, 60) + "…" : raw).append("\"");
+            if (focused) {
+                dbg.append(" (yazılıyor, atlandı)");
+                return null; // kullanıcı adres çubuğuna yazıyor; sayfa açılınca yakalarız
+            }
+            if (host == null) {
+                dbg.append(" → site değil");
+                continue;
+            }
+            if (SiteBlocklist.match(this, host) != null) return host;
+            dbg.append(" → ").append(host).append(" listede yok");
         }
         return null;
     }
 
-    private String scanForBlockedHost(AccessibilityNodeInfo root) {
+    private String scanForBlockedHost(AccessibilityNodeInfo root, StringBuilder dbg) {
         ArrayDeque<AccessibilityNodeInfo> stack = new ArrayDeque<>();
         stack.push(root);
         int visited = 0;
+        int notes = 0;
         while (!stack.isEmpty() && visited++ < 2500) {
             AccessibilityNodeInfo n = stack.pop();
             // WebView'in içi sayfa içeriğidir; oradaki bağlantı metinleri adres çubuğu değil.
             CharSequence cls = n.getClassName();
             if (cls != null && cls.toString().endsWith("WebView")) continue;
-            if (n.isVisibleToUser() && BrowserApps.looksLikeAddressBar(n.getViewIdResourceName(), cls)) {
-                String host = blockedHostIn(n);
+            String viewId = n.getViewIdResourceName();
+            if (n.isVisibleToUser() && BrowserApps.looksLikeAddressBar(viewId, cls)) {
+                String label = viewId != null ? viewId.substring(viewId.indexOf('/') + 1) : String.valueOf(cls);
+                StringBuilder local = notes < 4 ? dbg : new StringBuilder();
+                int before = local.length();
+                String host = blockedHostIn(n, local, label);
+                if (local.length() > before) notes++;
                 if (host != null) return host;
             }
             for (int i = 0; i < n.getChildCount(); i++) {
@@ -774,48 +833,212 @@ public class BlockerService extends AccessibilityService {
                 if (c != null) stack.push(c);
             }
         }
+        if (notes == 0) dbg.append("\nAdres çubuğuna benzeyen metin bulunamadı");
         return null;
     }
 
+    /** Ayarlar ekranındaki "Son okunan adres" kartı için. */
+    public static volatile String siteDebug;
+    public static volatile long siteDebugAt;
+
+    private static void recordSiteDebug(CharSequence text) {
+        siteDebug = text.toString();
+        siteDebugAt = System.currentTimeMillis();
+    }
+
+    /**
+     * Engelli site: tarayıcının üstüne hemen tam ekran katman koy. Katman erişilebilirlik
+     * servisinin kendi penceresi olduğu için hiçbir izne takılmaz; MIUI gibi sistemler arka
+     * plandan ekran açmayı sessizce engelliyor, eski yöntem (yeni ekran açmak) orada hiç
+     * görünmeden başarısız oluyordu. Katman, site önde kaldığı sürece durur.
+     */
     private void blockSite(AccessibilityNodeInfo root, String pkg, String host) {
+        siteHit = true;
+        boolean fresh = siteBlockView == null || !host.equals(siteBlockHost);
+        if (fresh) siteBlockShownAt = SystemClock.uptimeMillis();
+        siteBlockPkg = pkg;
+        foregroundPkg = pkg;
+        showSiteBlock(host);
+
         long now = SystemClock.uptimeMillis();
         if (host.equals(lastBlockedHost) && now - lastSiteBlockAt < 2500) return;
         lastBlockedHost = host;
         lastSiteBlockAt = now;
+        if (fresh) SiteBlocklist.countBlock(this);
 
         // Başka bir uygulamanın içinde açılan Chrome sekmesiyse (Custom Tab) kapat düğmesine bas.
-        boolean closed = false;
         List<AccessibilityNodeInfo> close = root.findAccessibilityNodeInfosByViewId(pkg + ":id/close_button");
         if (close != null) {
             for (AccessibilityNodeInfo c : close) {
-                if (c.isVisibleToUser() && clickNodeOrAncestor(c)) {
-                    closed = true;
-                    break;
-                }
+                if (c.isVisibleToUser() && clickNodeOrAncestor(c)) return;
             }
         }
-        if (!closed) {
-            // Aynı sekmede güvenli bir sayfaya git (EXTRA_APPLICATION_ID sekmeyi yeniden kullandırır).
-            Intent safe = new Intent(Intent.ACTION_VIEW, Uri.parse(SAFE_URL))
-                    .setPackage(pkg)
-                    .putExtra(Browser.EXTRA_APPLICATION_ID, pkg)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            try {
-                startActivity(safe);
-            } catch (RuntimeException e) {
-                performGlobalAction(GLOBAL_ACTION_BACK);
+        // Aynı sekmede güvenli bir sayfaya gitmeyi dene (EXTRA_APPLICATION_ID sekmeyi yeniden
+        // kullandırır). Sistem izin vermezse katman yine de siteyi kapalı tutar.
+        Intent safe = new Intent(Intent.ACTION_VIEW, Uri.parse(SAFE_URL))
+                .setPackage(pkg)
+                .putExtra(Browser.EXTRA_APPLICATION_ID, pkg)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(safe);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    /** Yenileme sonunda: engelli site artık önde değilse katmanı kaldır. */
+    private void updateSiteBlock(boolean sitesOn) {
+        if (siteBlockView == null || siteHit) return;
+        if (!sitesOn) {
+            hideSiteBlock();
+            return;
+        }
+        // Kullanıcı başka bir uygulamaya geçti (ana ekran, VOCD...): katmanı kaldır.
+        if (foregroundPkg != null && siteBlockPkg != null && !foregroundPkg.equals(siteBlockPkg)
+                && SystemClock.uptimeMillis() - siteBlockShownAt > 500) {
+            hideSiteBlock();
+            return;
+        }
+        // Katmanın altında kalan tarayıcı penceresi listede görünmeyebilir; etkin pencereden oku.
+        if (!browserSeen) {
+            AccessibilityNodeInfo active = getRootInActiveWindow();
+            CharSequence pkg = active != null ? active.getPackageName() : null;
+            if (pkg != null && pkg.toString().equals(siteBlockPkg)) {
+                checkSite(active, pkg);
+                if (siteHit) return;
             }
         }
-        SiteBlocklist.countBlock(this);
-        handler.postDelayed(() -> {
-            Intent i = new Intent(this, BlockedActivity.class)
-                    .putExtra(BlockedActivity.EXTRA_HOST, host)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        // Tarayıcının adresi okundu ve engelli değil (geri gidildi, başka siteye geçildi): kaldır.
+        // Okunamadıysa (seyrek tarama sırası gelmedi, pencere görünmüyor) kararı bekle.
+        if (browserSeen && siteEvaluated) hideSiteBlock();
+    }
+
+    /** Öndeki uygulamayı izle; sistem arayüzü ve klavye ön plan sayılmaz. */
+    private void noteForeground(String pkg) {
+        // VOCD'nin kendi katman penceresi de olay üretebilir; o ön plan değişimi değil.
+        if (pkg.equals("com.android.systemui") || pkg.equals(getPackageName())) return;
+        String ime = android.provider.Settings.Secure.getString(getContentResolver(),
+                android.provider.Settings.Secure.DEFAULT_INPUT_METHOD);
+        if (ime != null && ime.startsWith(pkg + "/")) return;
+        foregroundPkg = pkg;
+        if (siteBlockView != null && siteBlockPkg != null && !pkg.equals(siteBlockPkg)) scheduleRefresh(0);
+    }
+
+    private void showSiteBlock(String host) {
+        if (wm == null) return;
+        siteBlockHost = host;
+        try {
+            if (siteBlockView == null) {
+                siteBlockView = createSiteBlockView();
+                wm.addView(siteBlockView, siteBlockParams());
+            }
+            siteBlockHostView.setText(host);
+        } catch (RuntimeException e) {
+            siteBlockView = null;
+        }
+    }
+
+    private void hideSiteBlock() {
+        removeSiteBlock();
+    }
+
+    private void removeSiteBlock() {
+        if (siteBlockView != null && wm != null) {
             try {
-                startActivity(i);
+                wm.removeView(siteBlockView);
             } catch (RuntimeException ignored) {
             }
-        }, 250);
+        }
+        siteBlockView = null;
+        siteBlockHost = null;
+        siteBlockPkg = null;
+    }
+
+    private View createSiteBlockView() {
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(0xFA0B1020);
+        root.setClickable(true);
+        root.setOnTouchListener((view, e) -> true); // alttaki sayfaya dokunuş geçmesin
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        int pad = dp(28);
+        col.setPadding(pad, pad, pad, pad);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_block);
+        icon.setColorFilter(0xFFF87171);
+        col.addView(icon, new LinearLayout.LayoutParams(dp(72), dp(72)));
+
+        TextView title = new TextView(this);
+        title.setText("Bu site engelli");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(26);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        tl.topMargin = dp(20);
+        col.addView(title, tl);
+
+        siteBlockHostView = new TextView(this);
+        siteBlockHostView.setTextColor(0xFFCBD5E1);
+        siteBlockHostView.setTextSize(16);
+        siteBlockHostView.setTypeface(Typeface.MONOSPACE);
+        siteBlockHostView.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        hl.topMargin = dp(10);
+        col.addView(siteBlockHostView, hl);
+
+        TextView msg = new TextView(this);
+        msg.setText("Bu siteyi kendin engelledin. Dürtü birkaç dakikada geçer; derin bir nefes al.");
+        msg.setTextColor(0xFFE2E8F0);
+        msg.setTextSize(16);
+        msg.setGravity(Gravity.CENTER);
+        msg.setLineSpacing(0, 1.3f);
+        LinearLayout.LayoutParams ml = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        ml.topMargin = dp(16);
+        col.addView(msg, ml);
+
+        Button back = new Button(this);
+        back.setText("Geri dön");
+        back.setAllCaps(false);
+        back.setOnClickListener(v -> performGlobalAction(GLOBAL_ACTION_BACK));
+        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(56));
+        bl.topMargin = dp(36);
+        col.addView(back, bl);
+
+        Button home = new Button(this);
+        home.setText("Ana ekrana git");
+        home.setAllCaps(false);
+        home.setOnClickListener(v -> performGlobalAction(GLOBAL_ACTION_HOME));
+        LinearLayout.LayoutParams hb = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(56));
+        hb.topMargin = dp(12);
+        col.addView(home, hb);
+
+        root.addView(col, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        return root;
+    }
+
+    private WindowManager.LayoutParams siteBlockParams() {
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                // Odak almaz: geri tuşu tarayıcıya gider, tarayıcı geri gidince katman kalkar.
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.windowAnimations = 0;
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Durum ve gezinme çubukları açık kalsın; ana ekran / geri tuşları çalışsın.
+            lp.setFitInsetsTypes(WindowInsets.Type.systemBars());
+        }
+        return lp;
     }
 
     // ---------------------------------------------------------------- sıkı mod

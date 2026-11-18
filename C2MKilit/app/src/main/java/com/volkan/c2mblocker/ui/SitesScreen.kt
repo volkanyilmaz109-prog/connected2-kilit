@@ -82,13 +82,14 @@ fun SitesScreen(onBack: () -> Unit) {
     val shown = remember(sites, q) { if (q.isEmpty()) sites else sites.filter { it.contains(q) } }
 
     /** Metni arka planda ayrıştırıp listeye ekler; [load] dosya/ağ okuması yapabilir. */
-    fun importSites(label: String, load: () -> String) {
+    fun importSites(label: String, single: Boolean = false, load: () -> String) {
         if (busy != null) return
         busy = label
         scope.launch {
             val message = try {
                 val (found, added) = withContext(Dispatchers.IO) {
-                    val parsed = SiteBlocklist.parse(load())
+                    val raw = load()
+                    val parsed = if (single) SiteBlocklist.parseSingle(raw) else SiteBlocklist.parse(raw)
                     parsed.size to SiteBlocklist.add(ctx, parsed)
                 }
                 if (found == 0) "Listede geçerli site bulunamadı"
@@ -110,7 +111,7 @@ fun SitesScreen(onBack: () -> Unit) {
         if (single.isBlank()) return
         val text = single
         single = ""
-        importSites("Ekleniyor…") { text }
+        importSites("Ekleniyor…", single = true) { text }
     }
 
     LazyColumn(
@@ -144,7 +145,7 @@ fun SitesScreen(onBack: () -> Unit) {
                     value = single,
                     onValueChange = { single = it },
                     label = { Text("Site ekle") },
-                    placeholder = { Text("ornek.com") },
+                    placeholder = { Text("ornek.com ya da kelime") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Uri,

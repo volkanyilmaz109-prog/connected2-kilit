@@ -500,6 +500,9 @@ private fun SitesTab(tick: Int, onOpenSites: () -> Unit) {
 
     SectionTitle("Tüm uygulamalarda filtre")
     PrivateDnsCard(tick)
+
+    SectionTitle("Tanılama")
+    SiteDiagCard(tick)
 }
 
 /** Kurulum, sıkı mod ve şifre. */
