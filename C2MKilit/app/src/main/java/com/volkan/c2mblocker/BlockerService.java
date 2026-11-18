@@ -86,11 +86,24 @@ public class BlockerService extends AccessibilityService {
             "com.miui.packageinstaller", "com.android.permissioncontroller",
             "com.google.android.permissioncontroller", "com.samsung.android.lool",
     };
+    /**
+     * Ayar ekranlarında tehlikeli düğmeler. Yalnızca görünen ve metni tam olarak bu olan (ya da
+     * bununla başlayan) bir düğme sayılır; "Pil kullanımı" gibi metinler yanlışlıkla eşleşmesin.
+     */
     private static final String[] SETTINGS_DANGER = {
-            "Kaldır", "Uninstall", "Durmaya zorla", "Zorla durdur", "Force stop", "durdur", "Stop",
-            "Devre dışı", "Disable", "Kapat", "Turn off", "Kullan", "Use ", "Temizle", "Clear",
+            "Kaldır", "Uninstall", "Durmaya zorla", "Zorla durdur", "Force stop", "Durdur", "Stop",
+            "Devre dışı bırak", "Disable", "Kapat", "Turn off", "Verileri temizle", "Clear data",
+            "Depolamayı temizle", "Clear storage", "Tümünü temizle", "Clear all",
     };
-    private static final String[] LAUNCHER_DANGER = {"Kaldır", "Uninstall"};
+    /** Kaldırma iletişim kutusunda geçen sözcükler (metnin içinde aranır). */
+    private static final String[] UNINSTALL_WORDS = {"kaldır", "uninstall", "silinsin", "delete"};
+    /** Ayarların kendi kaldırma onay kutusu (düğmesi "Tamam" olabilir): onay cümlesi aranır. */
+    private static final String[] SETTINGS_CONFIRM = {
+            "kaldırılsın", "kaldırmak istiyor", "kaldırmak ister", "uninstall this",
+    };
+    private static final String[] INSTALLER_PKGS = {
+            "com.android.packageinstaller", "com.google.android.packageinstaller", "com.miui.packageinstaller",
+    };
 
     /** Tarayıcı paketi → adres çubuğunun view id'leri (paket önekisiz). */
     private static final Map<String, String[]> BROWSERS = new HashMap<>();
@@ -1112,30 +1125,80 @@ public class BlockerService extends AccessibilityService {
 
     // ---------------------------------------------------------------- sıkı mod
 
+    /**
+     * Sıkı mod: VOCD'yi kaldırma / durdurma / erişilebilirliğini kapatma ekranı önde mi?
+     * Yalnızca ekranda GÖRÜNEN metinlere bakılır. Ana ekran uygulamaları gizli bir "Kaldır"
+     * bırakma alanını hep ağaçta tutuyor; görünürlüğe bakmamak ana ekranda sürekli yanlış
+     * alarm verip ana ekran tuşuna basıyordu (menüler, bildirim paneli, son uygulamalar kapanıyordu).
+     */
     private void guard(AccessibilityNodeInfo root, CharSequence pkgCs) {
         if (pkgCs == null) return;
         String pkg = pkgCs.toString();
-        String[] words;
-        if (contains(SETTINGS_PKGS, pkg)) {
-            words = SETTINGS_DANGER;
-        } else if (pkg.contains("launcher") || pkg.equals("com.miui.home")) {
-            words = LAUNCHER_DANGER;
+        boolean launcher = pkg.contains("launcher") || pkg.equals("com.miui.home");
+        boolean installer = contains(INSTALLER_PKGS, pkg);
+        boolean settings = !installer && contains(SETTINGS_PKGS, pkg);
+        if (!launcher && !installer && !settings) return;
+        if (!hasVisibleText(root, getString(R.string.app_name), false)) return;
+
+        boolean danger;
+        if (settings) {
+            // Erişilebilirlik sayfası VOCD'nin açıklamasını gösterir; uygulama bilgisi düğmeleri.
+            danger = hasVisibleText(root, getString(R.string.guard_marker), false);
+            for (int i = 0; i < SETTINGS_DANGER.length && !danger; i++) {
+                danger = hasVisibleText(root, SETTINGS_DANGER[i], true);
+            }
+            for (int i = 0; i < SETTINGS_CONFIRM.length && !danger; i++) {
+                danger = hasVisibleText(root, SETTINGS_CONFIRM[i], false);
+            }
         } else {
-            return;
+            // Kurulum aracı ya da ana ekranın kaldırma menüsü / onay kutusu.
+            danger = false;
+            for (int i = 0; i < UNINSTALL_WORDS.length && !danger; i++) {
+                danger = hasVisibleText(root, UNINSTALL_WORDS[i], false);
+            }
+            if (launcher && !danger) danger = hasVisibleText(root, "Sil", true);
         }
-        if (!hasText(root, getString(R.string.app_name))) return;
-        boolean danger = hasText(root, getString(R.string.guard_marker));
-        for (int i = 0; i < words.length && !danger; i++) danger = hasText(root, words[i]);
         if (!danger) return;
 
         long now = SystemClock.uptimeMillis();
         if (now - lastGuardAt < 800) return;
         lastGuardAt = now;
-        performGlobalAction(GLOBAL_ACTION_HOME);
+        // Önce geri: açılan menü ya da onay kutusu kapanır (ana ekrandayken ana ekran tuşu
+        // ana ekranın kendi onay kutusunu kapatmıyordu). Ardından ana ekran.
+        performGlobalAction(GLOBAL_ACTION_BACK);
+        handler.postDelayed(() -> performGlobalAction(GLOBAL_ACTION_HOME), 150);
         if (now - lastGuardToastAt > 5000) {
             lastGuardToastAt = now;
             Toast.makeText(this, R.string.guard_toast, Toast.LENGTH_LONG).show();
         }
+    }
+
+    /**
+     * Ekranda görünen bir görünümün metni / açıklaması [text]'i içeriyor mu (exact: metin tam
+     * olarak bu ya da bununla başlıyor mu). Gizli görünümler sayılmaz.
+     */
+    private static boolean hasVisibleText(AccessibilityNodeInfo root, String text, boolean exact) {
+        List<AccessibilityNodeInfo> found = root.findAccessibilityNodeInfosByText(text);
+        if (found == null) return false;
+        for (AccessibilityNodeInfo n : found) {
+            if (!n.isVisibleToUser()) continue;
+            if (!exact) return true;
+            if (startsWithWord(n.getText(), text) || startsWithWord(n.getContentDescription(), text)) return true;
+        }
+        return false;
+    }
+
+    /** "Kaldır" → "Kaldır", "KALDIR", "Kaldır (12 MB)" evet; "Pil kullanımı" hayır. */
+    static boolean startsWithWord(CharSequence value, String word) {
+        if (value == null) return false;
+        String v = value.toString().trim();
+        if (!v.regionMatches(true, 0, word, 0, word.length())) {
+            // Türkçe büyük harf: "KALDIR" ile "Kaldır" (ı / I) eşleşsin.
+            String vl = v.toLowerCase(new java.util.Locale("tr"));
+            String wl = word.toLowerCase(new java.util.Locale("tr"));
+            if (!vl.startsWith(wl)) return false;
+        }
+        return v.length() == word.length() || !Character.isLetter(v.charAt(word.length()));
     }
 
     static boolean isStrictActive(Context ctx) {
