@@ -146,6 +146,13 @@ public class BlockerService extends AccessibilityService {
     private boolean hasPending;
     private long pendingSince;
     private long lastRedirectAt;
+    /** Son okunan alt menü: sekme dilimleri (soldan sağa) ve güvenli sekme. Hızlı yönlendirme için. */
+    private Rect[] lastSlots;
+    private int lastBarTop;
+    private int lastBarBottom;
+    private AccessibilityNodeInfo lastSafeNode;
+    private Rect lastSafeRect;
+    private long lastFastRedirectAt;
     private long lastGuardAt;
     private long lastGuardToastAt;
     private String lastBlockedHost;
@@ -160,7 +167,7 @@ public class BlockerService extends AccessibilityService {
         @Override
         public void run() {
             refresh();
-            if (targetInFront) handler.postDelayed(this, 500);
+            if (targetInFront) handler.postDelayed(this, 250);
         }
     };
 
@@ -173,11 +180,16 @@ public class BlockerService extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         CharSequence pkg = event.getPackageName();
-        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) {
+        int type = event.getEventType();
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) {
             rememberPackage(pkg.toString());
         }
+        if ((type == AccessibilityEvent.TYPE_VIEW_CLICKED || type == AccessibilityEvent.TYPE_VIEW_SELECTED)
+                && isTarget(this, pkg) && isBlockedTabEvent(event)) {
+            fastRedirect();
+        }
         // Debounce değil throttle: animasyon boyunca yağan olaylar yenilemeyi sürekli ertelemesin.
-        if (!refreshPending) scheduleRefresh(30);
+        if (!refreshPending) scheduleRefresh(16);
     }
 
     private void scheduleRefresh(long delayMs) {
@@ -287,7 +299,7 @@ public class BlockerService extends AccessibilityService {
         if (!targetInFront) {
             targetInFront = true;
             handler.removeCallbacks(heartbeat);
-            handler.postDelayed(heartbeat, 500);
+            handler.postDelayed(heartbeat, 250);
         }
 
         List<AccessibilityNodeInfo> tabs = null;
@@ -296,6 +308,7 @@ public class BlockerService extends AccessibilityService {
             tabs = findBottomTabs(targetRoots.get(i), targetWins.get(i), ime);
             if (tabs != null) targetWin = targetWins.get(i);
         }
+        if (tabs != null) rememberTabs(tabs, targetWin);
 
         // Katmanlar bu çizginin altına inmez: altında klavye ya da sistemin geri/ana ekran tuşları var.
         int floor = Math.min(targetWin.bottom, navBarTop);
@@ -326,6 +339,9 @@ public class BlockerService extends AccessibilityService {
 
     private void leaveTarget() {
         targetInFront = false;
+        lastSlots = null;
+        lastSafeNode = null;
+        lastSafeRect = null;
         handler.removeCallbacks(heartbeat);
         handler.removeCallbacks(placementCheck);
         placementCheckPending = false;
@@ -356,6 +372,20 @@ public class BlockerService extends AccessibilityService {
             scheduleRefresh(MOVE_SETTLE_MS); // ilk konum animasyon ortasında okunmuş olabilir; doğrula
             return;
         }
+        if (candidate != null) {
+            Rect[] bridge = bridge(shownRects, candidate);
+            if (bridge == null) {
+                // Büyük sıçrama (klavye açıldı, menü yukarı çıktı): eski yerde beklemek sekmeyi
+                // açıkta bırakır. Hemen taşı, sonraki okumalar konumu düzeltir.
+                show(candidate);
+                hasPending = false;
+                scheduleRefresh(MOVE_SETTLE_MS);
+                return;
+            }
+            // Küçük kayma: oturana kadar eski ve yeni yerin birleşimini kapla; aradaki geçişte
+            // dokunulabilir boşluk kalmasın. shownRects değişmez, oturunca tam yere geçilir.
+            placeOverlays(bridge);
+        }
         if (!hasPending || !similar(candidate, pendingRects)) {
             pendingRects = candidate;
             pendingSince = now;
@@ -369,6 +399,29 @@ public class BlockerService extends AccessibilityService {
         } else {
             scheduleRefresh(wait);
         }
+    }
+
+    /**
+     * Eski ve yeni konumun sekme sekme birleşimi. Birleşim sekmenin iki katından uzunsa ya da
+     * yana kayıyorsa (başka içeriği kapatır) null döner; o zaman doğrudan yeni yere geçilir.
+     */
+    private Rect[] bridge(Rect[] from, Rect[] to) {
+        if (from == null || to == null || from.length != to.length) return null;
+        Rect[] out = new Rect[to.length];
+        for (int i = 0; i < to.length; i++) {
+            Rect a = from[i];
+            Rect b = to[i];
+            if (a == null || b == null) {
+                out[i] = b != null ? new Rect(b) : (a != null ? new Rect(a) : null);
+                continue;
+            }
+            Rect u = new Rect(a);
+            u.union(b);
+            int h = Math.max(a.height(), b.height());
+            if (u.height() > h * 2 || u.width() > Math.max(a.width(), b.width()) + dp(16)) return null;
+            out[i] = u;
+        }
+        return out;
     }
 
     private static boolean allNull(Rect[] rects) {
@@ -571,6 +624,61 @@ public class BlockerService extends AccessibilityService {
         } else if (!detectionWorks && !imeVisible) {
             tap(fallbackTabRect(win, floor, SAFE_TAB));
         }
+    }
+
+    /** Alt menünün son konumunu sakla: tıklama olayı geldiğinde ağacı yeniden taramadan karar verilir. */
+    private void rememberTabs(List<AccessibilityNodeInfo> tabs, Rect win) {
+        Rect[] cols = new Rect[TAB_COUNT];
+        int top = Integer.MAX_VALUE;
+        int bottom = Integer.MIN_VALUE;
+        for (int i = 0; i < TAB_COUNT; i++) {
+            cols[i] = bounds(tabs.get(i));
+            top = Math.min(top, cols[i].top);
+            bottom = Math.max(bottom, cols[i].bottom);
+        }
+        Rect[] slots = new Rect[TAB_COUNT];
+        for (int i = 0; i < TAB_COUNT; i++) {
+            int left = i == 0 ? Math.min(win.left, cols[0].left) : (cols[i - 1].right + cols[i].left) / 2;
+            int right = i == TAB_COUNT - 1 ? Math.max(win.right, cols[i].right) : (cols[i].right + cols[i + 1].left) / 2;
+            slots[i] = new Rect(left, top, right, bottom);
+        }
+        lastSlots = slots;
+        lastBarTop = top - dp(24);
+        lastBarBottom = bottom + dp(12);
+        lastSafeNode = tabs.get(SAFE_TAB);
+        lastSafeRect = cols[SAFE_TAB];
+    }
+
+    /**
+     * Tıklanan / seçilen görünüm engelli bir sekmenin diliminde mi? Katmanın arasından bir dokunuş
+     * sızarsa (katman yer değiştirirken) olay sekme açılmadan önce gelir.
+     */
+    private boolean isBlockedTabEvent(AccessibilityEvent event) {
+        Rect[] slots = lastSlots;
+        if (slots == null) return false;
+        AccessibilityNodeInfo src = event.getSource();
+        if (src == null) return false;
+        Rect b = bounds(src);
+        if (b.isEmpty() || b.height() > dp(140)) return false;
+        int cx = b.centerX();
+        int cy = b.centerY();
+        if (cy < lastBarTop || cy > lastBarBottom) return false;
+        for (int idx : BLOCKED_TABS) {
+            if (cx >= slots[idx].left && cx < slots[idx].right) return true;
+        }
+        return false;
+    }
+
+    /** Engelli sekmeye dokunulduğu anda, ekran taraması beklenmeden 2. sekmeye geç. */
+    private void fastRedirect() {
+        long now = SystemClock.uptimeMillis();
+        if (now - lastFastRedirectAt < 300) return;
+        lastFastRedirectAt = now;
+        AccessibilityNodeInfo safe = lastSafeNode;
+        boolean done = false;
+        if (safe != null && safe.refresh()) done = clickNodeOrAncestor(safe);
+        if (!done && lastSafeRect != null) tap(lastSafeRect);
+        scheduleRefresh(0);
     }
 
     private boolean looksLikeShuffle(AccessibilityNodeInfo root) {

@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.PersistableBundle
@@ -75,10 +76,28 @@ object Sys {
     fun privateDnsHost(ctx: Context): String? {
         if (Build.VERSION.SDK_INT < 28) return null
         val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return null
+        // VPN açıkken etkin ağ VPN'in kendisi oluyor ve onun bilgisinde Özel DNS adı yer almıyor.
+        // Önce etkin ağa, sonra telefonun gerçek (Wi-Fi / mobil) ağlarına bak.
         return try {
             cm.getLinkProperties(cm.activeNetwork)?.privateDnsServerName
+                ?: @Suppress("DEPRECATION") cm.allNetworks.firstNotNullOfOrNull { n ->
+                    val caps = cm.getNetworkCapabilities(n)
+                    if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) null
+                    else cm.getLinkProperties(n)?.privateDnsServerName
+                }
         } catch (e: RuntimeException) {
             null
+        }
+    }
+
+    /** Bir VPN bağlı mı? VPN trafiği kendi DNS'iyle çözdüğü için Özel DNS filtresi devre dışı kalabilir. */
+    fun vpnActive(ctx: Context): Boolean {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return false
+        return try {
+            @Suppress("DEPRECATION")
+            cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
+        } catch (e: RuntimeException) {
+            false
         }
     }
 

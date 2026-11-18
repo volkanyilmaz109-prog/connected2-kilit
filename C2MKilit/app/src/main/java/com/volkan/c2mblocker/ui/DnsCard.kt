@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.VpnLock
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,7 +34,7 @@ import com.volkan.c2mblocker.Sys
  * VOCD bu ayarı kendisi değiştiremez; adresi kopyalatır, ayarları açar ve durumu gösterir.
  */
 internal object DnsFilters {
-    data class Filter(val name: String, val detail: String, val host: String)
+    data class Filter(val name: String, val detail: String, val host: String, val ip: String)
 
     val ALL = listOf(
         Filter(
@@ -41,16 +42,19 @@ internal object DnsFilters {
             "En sıkısı: yetişkin içerik, VPN / proxy siteleri ve karışık içerikli siteler (ör. Reddit) " +
                 "kapanır; Google, Bing ve YouTube güvenli modda açılır.",
             "family-filter-dns.cleanbrowsing.org",
+            "185.228.168.168",
         ),
         Filter(
             "CleanBrowsing Yetişkin",
             "Yetişkin içerik kapanır, Google ve Bing güvenli aramada açılır. Reddit gibi siteler açık kalır.",
             "adult-filter-dns.cleanbrowsing.org",
+            "185.228.168.10",
         ),
         Filter(
             "Cloudflare Aile",
             "Yetişkin içerik ve zararlı yazılım siteleri kapanır.",
             "family.cloudflare-dns.com",
+            "1.1.1.3",
         ),
     )
 }
@@ -61,6 +65,7 @@ internal fun PrivateDnsCard(tick: Int) {
     val supported = Build.VERSION.SDK_INT >= 28
     val host = remember(tick) { Sys.privateDnsHost(ctx) }
     val active = DnsFilters.ALL.firstOrNull { it.host.equals(host, ignoreCase = true) }
+    val vpn = remember(tick) { Sys.vpnActive(ctx) }
 
     SectionCard {
         ChecklistRow(
@@ -80,6 +85,10 @@ internal fun PrivateDnsCard(tick: Int) {
             action = "Ayarları aç",
             onClick = { Sys.openNetworkSettings(ctx) },
         )
+        if (vpn) {
+            RowDivider()
+            VpnWarning()
+        }
         RowDivider()
         Text(
             "Tarayıcı fark etmeksizin tüm telefonda çalışır. Aşağıdan bir adres kopyala, sonra " +
@@ -139,10 +148,48 @@ private fun FilterRow(filter: DnsFilters.Filter, inUse: Boolean) {
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
+            Text(
+                "VPN uygulaması için IP: ${filter.ip}",
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Spacer(Modifier.width(8.dp))
         FilledTonalIconButton(onClick = { Sys.copyText(ctx, "Özel DNS", filter.host) }) {
             Icon(Icons.Rounded.ContentCopy, contentDescription = "${filter.name} adresini kopyala")
+        }
+    }
+}
+
+/** VPN bağlıyken DNS soruları VPN'in kendi sunucusuna gider; Özel DNS filtresi atlanabilir. */
+@Composable
+private fun VpnWarning() {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(
+            Icons.Rounded.VpnLock,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(start = 8.dp, top = 2.dp).size(24.dp),
+        )
+        Spacer(Modifier.width(24.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                "VPN açık: DNS filtresi atlanıyor olabilir",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Text(
+                "VPN bağlıyken siteler çoğunlukla VPN'in kendi DNS sunucusundan çözülür, Özel DNS " +
+                    "ayarı devreye girmez. VPN uygulamasında \"özel DNS\" seçeneği varsa yukarıdaki " +
+                    "filtrenin IP adresini (ör. 185.228.168.168) oraya gir ya da VPN'i kapat. Engelli siteler listesi tarayıcı " +
+                    "katmanıyla VPN açıkken de çalışır.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
