@@ -152,6 +152,13 @@ public class BlockerService extends AccessibilityService {
     private boolean hasPending;
     private long pendingSince;
     private long lastRedirectAt;
+    /** Bekleyen yenilemenin çalışacağı an; daha erken isteyen olay onu öne çekebilir. */
+    private long refreshDueAt;
+    /** Son sıkı mod taramasından beri pencere / iletişim kutusu değişti mi. */
+    private boolean windowStateChanged = true;
+    private long lastGuardScanAt;
+    /** Pencere kimliği → paket. İlgisiz uygulamaların ağacı her yenilemede istenmesin. */
+    private final Map<Integer, String> windowPkg = new HashMap<>();
     /** Son okunan alt menü: sekme dilimleri (soldan sağa) ve güvenli sekme. Hızlı yönlendirme için. */
     private Rect[] lastSlots;
     private int lastBarTop;
@@ -210,13 +217,40 @@ public class BlockerService extends AccessibilityService {
                 && isTarget(this, pkg) && isBlockedTabEvent(event)) {
             fastRedirect();
         }
-        // Debounce değil throttle: animasyon boyunca yağan olaylar yenilemeyi sürekli ertelemesin.
-        if (!refreshPending) scheduleRefresh(16);
+        boolean stateChange = type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED;
+        if (stateChange) windowStateChanged = true;
+        // Her uygulamanın her olayında hızlı tarama yapmak ana ekranı ve son uygulamalar ekranını
+        // yavaşlatıyordu (sorgular o uygulamanın arayüz iş parçacığında çalışır; dokunuşlar
+        // kaçıyordu). Hızlı tarama yalnızca C2, tarayıcılar ve açık bir engel katmanı için.
+        long delay;
+        String p = pkg != null ? pkg.toString() : null;
+        if (p != null && (isTarget(this, p) || BROWSERS.containsKey(p) || BrowserApps.isBrowser(this, p))) {
+            delay = 16;
+        } else if (targetInFront || siteBlockView != null) {
+            delay = 16; // C2 öndeyken klavye / gezinme çubuğu olayları da katmanın yerini etkiler
+        } else if (stateChange) {
+            delay = 60; // uygulama değişti: C2'den çıkıldıysa katmanlar çabuk kalksın
+        } else {
+            delay = 300;
+        }
+        requestRefresh(delay);
+    }
+
+    /**
+     * Throttle: bekleyen yenileme varsa ertelenmez (animasyon boyunca yağan olaylar onu sürekli
+     * ileri itmesin), yalnızca daha erken isteyen bir olay onu öne çeker.
+     */
+    private void requestRefresh(long delayMs) {
+        long due = SystemClock.uptimeMillis() + delayMs;
+        if (refreshPending && refreshDueAt <= due) return;
+        scheduleRefresh(delayMs);
     }
 
     private void scheduleRefresh(long delayMs) {
         handler.removeCallbacks(refreshRunnable);
         refreshPending = true;
+        refreshDueAt = SystemClock.uptimeMillis() + delayMs;
         handler.postDelayed(refreshRunnable, delayMs);
     }
 
@@ -252,6 +286,13 @@ public class BlockerService extends AccessibilityService {
     private void refresh() {
         boolean strict = isStrictActive(this);
         boolean sites = SiteBlocklist.isEnabled(this);
+        long nowMs = SystemClock.uptimeMillis();
+        // Sıkı mod ekranın tamamında metin arar (pahalı): pencere değişince ya da saniyede bir.
+        boolean guardNow = strict && (windowStateChanged || nowMs - lastGuardScanAt >= 1000);
+        if (guardNow) {
+            windowStateChanged = false;
+            lastGuardScanAt = nowMs;
+        }
         browserSeen = false;
         siteEvaluated = false;
         siteHit = false;
@@ -289,9 +330,15 @@ public class BlockerService extends AccessibilityService {
                 wi.getBoundsInScreen(r);
                 if (looksLikeNavigationBar(r)) navBarTop = Math.min(navBarTop, r.top);
             }
+            String knownPkg = windowPkg.get(wi.getId());
+            if (knownPkg != null && !isInteresting(knownPkg, guardNow, sites)) continue;
             AccessibilityNodeInfo root = wi.getRoot();
             if (root == null) continue;
             CharSequence pkg = root.getPackageName();
+            if (pkg != null) {
+                if (windowPkg.size() > 64) windowPkg.clear();
+                windowPkg.put(wi.getId(), pkg.toString());
+            }
             if (type == AccessibilityWindowInfo.TYPE_APPLICATION) {
                 if (isTarget(this, pkg)) {
                     Rect r = new Rect();
@@ -301,14 +348,14 @@ public class BlockerService extends AccessibilityService {
                 }
                 if (sites) checkSite(root, pkg);
             }
-            if (strict) guard(root, pkg);
+            if (guardNow) guard(root, pkg);
         }
 
         if (windows.isEmpty()) {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return; // geçiş anı; mevcut durumu koru, heartbeat tekrar dener
             CharSequence pkg = root.getPackageName();
-            if (strict) guard(root, pkg);
+            if (guardNow) guard(root, pkg);
             if (sites) checkSite(root, pkg);
             if (isTarget(this, pkg)) {
                 Rect r = new Rect();
@@ -363,6 +410,17 @@ public class BlockerService extends AccessibilityService {
             placementCheckPending = true;
             handler.postDelayed(placementCheck, PLACEMENT_CHECK_MS);
         }
+    }
+
+    /** Bu pencerenin ağacını okumak gerekiyor mu: C2, tarayıcı ya da sıkı modun koruduğu ekran. */
+    private boolean isInteresting(String pkg, boolean guardNow, boolean sites) {
+        if (isTarget(this, pkg)) return true;
+        if (sites && (BROWSERS.containsKey(pkg) || BrowserApps.isBrowser(this, pkg))) return true;
+        return guardNow && isGuarded(pkg);
+    }
+
+    private static boolean isGuarded(String pkg) {
+        return contains(SETTINGS_PKGS, pkg) || pkg.contains("launcher") || pkg.equals("com.miui.home");
     }
 
     private void leaveTarget() {
