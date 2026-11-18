@@ -18,8 +18,8 @@ android {
         minSdk 26
         targetSdk 34
         // Her güncellemede versionCode'u bir artır; telefondaki sürümün üstüne kurulur.
-        versionCode 12
-        versionName '3.8'
+        versionCode 13
+        versionName '3.9'
     }
 
     // Güncellemelerin eski sürümün üstüne kurulabilmesi için hep aynı anahtarla imzala.

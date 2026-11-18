@@ -18,7 +18,12 @@ object Vault {
     private const val ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
     private const val ITERATIONS = 20_000
     private const val FREE_ATTEMPTS = 5
-    private const val GRACE_MS = 10 * 60_000L
+    /** "Korumayı 10 dk kapat" düğmesi. */
+    const val GRACE_MS = 10 * 60_000L
+    /** VOCD'nin kendi açtığı ayar ekranı (pil, otomatik başlatma...) için. */
+    const val SETTINGS_GRACE_MS = 3 * 60_000L
+    /** Güncelleme kurulumu için; yeni sürüm başlayınca hemen kapanır. */
+    const val UPDATE_GRACE_MS = 3 * 60_000L
 
     private val random = SecureRandom()
 
@@ -63,7 +68,8 @@ object Vault {
             .putInt(BlockerService.KEY_FAILS, 0)
             .putLong(BlockerService.KEY_LOCK_UNTIL, 0)
             .apply()
-        extendGrace(ctx)
+        // Şifreyi girmek silme korumasını kendiliğinden kapatmaz. Ayarlar sekmesindeki
+        // "Korumayı 10 dk kapat" ya da VOCD'nin açtığı ayar ekranları kısa süreli serbest bırakır.
     }
 
     fun registerFailure(ctx: Context) {
@@ -84,12 +90,24 @@ object Vault {
     fun graceRemainingMs(ctx: Context): Long =
         (prefs(ctx).getLong(BlockerService.KEY_GRACE_UNTIL, 0) - System.currentTimeMillis()).coerceAtLeast(0)
 
-    fun extendGrace(ctx: Context) {
-        prefs(ctx).edit().putLong(BlockerService.KEY_GRACE_UNTIL, System.currentTimeMillis() + GRACE_MS).apply()
+    fun extendGrace(ctx: Context, ms: Long = GRACE_MS) {
+        val until = System.currentTimeMillis() + ms
+        val p = prefs(ctx)
+        // Daha uzun süren bir serbest süreyi kısaltma.
+        if (p.getLong(BlockerService.KEY_GRACE_UNTIL, 0) >= until) return
+        p.edit().putLong(BlockerService.KEY_GRACE_UNTIL, until).apply()
+    }
+
+    fun startUpdateGrace(ctx: Context) {
+        extendGrace(ctx, UPDATE_GRACE_MS)
+        prefs(ctx).edit().putBoolean(BlockerService.KEY_UPDATE_GRACE, true).apply()
     }
 
     fun endGrace(ctx: Context) {
-        prefs(ctx).edit().putLong(BlockerService.KEY_GRACE_UNTIL, 0).apply()
+        prefs(ctx).edit()
+            .putLong(BlockerService.KEY_GRACE_UNTIL, 0)
+            .putBoolean(BlockerService.KEY_UPDATE_GRACE, false)
+            .apply()
     }
 
     fun isStrict(ctx: Context): Boolean = prefs(ctx).getBoolean(BlockerService.KEY_STRICT, true)

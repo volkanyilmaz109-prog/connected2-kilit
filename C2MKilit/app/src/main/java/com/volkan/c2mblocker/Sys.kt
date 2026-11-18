@@ -53,7 +53,7 @@ object Sys {
 
     private fun open(ctx: Context, intent: Intent): Boolean = try {
         leavingTemporarily = true
-        Vault.extendGrace(ctx) // şifre girilmiş durumda; ayar ekranlarını sıkı mod engellemesin
+        Vault.extendGrace(ctx, Vault.SETTINGS_GRACE_MS) // VOCD'nin açtığı ayar ekranını sıkı mod engellemesin
         ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         true
     } catch (e: RuntimeException) {

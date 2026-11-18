@@ -137,7 +137,7 @@ object Updater {
             .setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         Sys.leavingTemporarily = true
-        Vault.extendGrace(ctx) // kurulum ekranı VOCD'nin adını gösterir; sıkı mod engellemesin
+        Vault.startUpdateGrace(ctx) // kurulum ekranı VOCD'nin adını gösterir; yeni sürüm açılınca kapanır
         ctx.startActivity(intent)
     }
 

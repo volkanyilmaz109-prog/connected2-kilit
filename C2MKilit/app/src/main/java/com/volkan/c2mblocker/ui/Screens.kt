@@ -516,7 +516,7 @@ private fun SettingsTab(
 ) {
     val ctx = LocalContext.current
     val batteryOk = remember(tick) { Sys.isIgnoringBattery(ctx) }
-    val graceMs = remember(tick) { Vault.graceRemainingMs(ctx) }
+    var graceMs by remember(tick) { mutableStateOf(Vault.graceRemainingMs(ctx)) }
     var showNewPassword by remember { mutableStateOf(false) }
 
     SectionTitle("Kurulum")
@@ -564,6 +564,7 @@ private fun SettingsTab(
         graceMs = graceMs,
         onStrictChange = onStrictChange,
         onLockNow = { Vault.endGrace(ctx); onLock() },
+        onUnguard = { Vault.extendGrace(ctx, Vault.GRACE_MS); graceMs = Vault.graceRemainingMs(ctx) },
     )
 
     SectionTitle("Şifre")
@@ -588,7 +589,13 @@ private fun SettingsTab(
 }
 
 @Composable
-private fun StrictCard(strict: Boolean, graceMs: Long, onStrictChange: (Boolean) -> Unit, onLockNow: () -> Unit) {
+private fun StrictCard(
+    strict: Boolean,
+    graceMs: Long,
+    onStrictChange: (Boolean) -> Unit,
+    onLockNow: () -> Unit,
+    onUnguard: () -> Unit,
+) {
     SectionCard {
         Row(
             Modifier
@@ -622,6 +629,21 @@ private fun StrictCard(strict: Boolean, graceMs: Long, onStrictChange: (Boolean)
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = onLockNow, modifier = Modifier.heightIn(min = 48.dp)) { Text("Şimdi kilitle") }
+                }
+            }
+        }
+        AnimatedVisibility(visible = strict && graceMs == 0L) {
+            Column {
+                RowDivider()
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Koruma açık. VOCD'yi bilerek kaldırmak ya da ayarını değiştirmek için korumayı kısa süre kapat.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = onUnguard, modifier = Modifier.heightIn(min = 48.dp)) { Text("10 dk kapat") }
                 }
             }
         }

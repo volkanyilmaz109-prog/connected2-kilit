@@ -157,6 +157,10 @@ public class BlockerService extends AccessibilityService {
     /** Son sıkı mod taramasından beri pencere / iletişim kutusu değişti mi. */
     private boolean windowStateChanged = true;
     private long lastGuardScanAt;
+    /** Sıkı mod taramaları arası en kısa süre; kaldırma menüsü açılır açılmaz yakalansın. */
+    private static final long GUARD_MIN_MS = 150;
+    /** Güncelleme kurulurken açılan kısa serbest süre; yeni sürüm başlayınca kapanır. */
+    public static final String KEY_UPDATE_GRACE = "update_grace";
     /** Pencere kimliği → paket. İlgisiz uygulamaların ağacı her yenilemede istenmesin. */
     private final Map<Integer, String> windowPkg = new HashMap<>();
     /** Son okunan alt menü: sekme dilimleri (soldan sağa) ve güvenli sekme. Hızlı yönlendirme için. */
@@ -202,6 +206,11 @@ public class BlockerService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        // Güncelleme kurulduysa servis yeniden bağlanır: kurulum için açılan serbest süreyi kapat.
+        SharedPreferences p = prefs(this);
+        if (p.getBoolean(KEY_UPDATE_GRACE, false)) {
+            p.edit().putBoolean(KEY_UPDATE_GRACE, false).putLong(KEY_GRACE_UNTIL, 0).apply();
+        }
         scheduleRefresh(0);
     }
 
@@ -227,6 +236,8 @@ public class BlockerService extends AccessibilityService {
         String p = pkg != null ? pkg.toString() : null;
         if (p != null && (isTarget(this, p) || BROWSERS.containsKey(p) || BrowserApps.isBrowser(this, p))) {
             delay = 16;
+        } else if (p != null && isGuarded(p) && isStrictActive(this)) {
+            delay = 40; // ana ekran / ayarlar / kaldırma ekranı: silme koruması gecikmesin
         } else if (targetInFront || siteBlockView != null) {
             delay = 16; // C2 öndeyken klavye / gezinme çubuğu olayları da katmanın yerini etkiler
         } else if (stateChange) {
@@ -287,8 +298,8 @@ public class BlockerService extends AccessibilityService {
         boolean strict = isStrictActive(this);
         boolean sites = SiteBlocklist.isEnabled(this);
         long nowMs = SystemClock.uptimeMillis();
-        // Sıkı mod ekranın tamamında metin arar (pahalı): pencere değişince ya da saniyede bir.
-        boolean guardNow = strict && (windowStateChanged || nowMs - lastGuardScanAt >= 1000);
+        // Sıkı mod ekranın tamamında metin arar: pencere değişince hemen, yoksa en sık 150 ms'de bir.
+        boolean guardNow = strict && (windowStateChanged || nowMs - lastGuardScanAt >= GUARD_MIN_MS);
         if (guardNow) {
             windowStateChanged = false;
             lastGuardScanAt = nowMs;
